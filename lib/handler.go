@@ -34,40 +34,16 @@ func NewHandler(c *Config) (http.Handler, error) {
 		noPassword:  c.NoPassword,
 		behindProxy: c.BehindProxy,
 		user: &handlerUser{
-			User: User{
-				UserPermissions: c.UserPermissions,
-			},
-			Handler: webdav.Handler{
-				Prefix: c.Prefix,
-				FileSystem: Dir{
-					Dir:     webdav.Dir(c.Directory),
-					noSniff: c.NoSniff,
-				},
-				LockSystem: &lockSystem{
-					LockSystem: ls,
-					directory:  c.Directory,
-				},
-				Logger: logFunc,
-			},
+			User:    User{UserPermissions: c.UserPermissions},
+			Handler: buildWebdavHandler(c.UserPermissions, c.Prefix, c.NoSniff, ls, logFunc),
 		},
 		users: map[string]*handlerUser{},
 	}
 
 	for _, u := range c.Users {
 		h.users[u.Username] = &handlerUser{
-			User: u,
-			Handler: webdav.Handler{
-				Prefix: c.Prefix,
-				FileSystem: Dir{
-					Dir:     webdav.Dir(u.Directory),
-					noSniff: c.NoSniff,
-				},
-				LockSystem: &lockSystem{
-					LockSystem: ls,
-					directory:  u.Directory,
-				},
-				Logger: logFunc,
-			},
+			User:    u,
+			Handler: buildWebdavHandler(u.UserPermissions, c.Prefix, c.NoSniff, ls, logFunc),
 		}
 	}
 
@@ -91,6 +67,32 @@ func NewHandler(c *Config) (http.Handler, error) {
 	}
 
 	return h, nil
+}
+
+// buildWebdavHandler creates the [webdav.Handler] for a set of user permissions,
+// selecting between single-directory and multi-directory backing depending on
+// whether directories are configured.
+func buildWebdavHandler(p UserPermissions, prefix string, noSniff bool, ls webdav.LockSystem, logFunc func(*http.Request, error)) webdav.Handler {
+	h := webdav.Handler{
+		Prefix: prefix,
+		Logger: logFunc,
+	}
+
+	if p.useDirectories {
+		h.FileSystem = multiDir{
+			mounts:  p.Directories,
+			noSniff: noSniff,
+		}
+		h.LockSystem = newMultiDirLockSystem(ls, p.Directories)
+	} else {
+		h.FileSystem = Dir{
+			Dir:     webdav.Dir(p.Directory),
+			noSniff: noSniff,
+		}
+		h.LockSystem = newLockSystem(ls, p.Directory)
+	}
+
+	return h
 }
 
 // ServeHTTP determines if the request is for this plugin, and if all prerequisites are met.
